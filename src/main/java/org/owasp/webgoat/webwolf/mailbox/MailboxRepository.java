@@ -7,7 +7,7 @@ package org.owasp.webgoat.webwolf.mailbox;
 import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface MailboxRepository extends JpaRepository<Email, String> {
+public interface MailboxRepository extends JpaRepository<Email, Long> {
 
   List<Email> findByRecipientOrderByTimeDesc(String recipient);
 }
