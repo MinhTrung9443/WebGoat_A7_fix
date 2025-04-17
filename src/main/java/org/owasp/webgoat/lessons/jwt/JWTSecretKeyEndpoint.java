@@ -31,8 +31,14 @@ import org.springframework.web.bind.annotation.RestController;
 @AssignmentHints({"jwt-secret-hint1", "jwt-secret-hint2", "jwt-secret-hint3"})
 public class JWTSecretKeyEndpoint implements AssignmentEndpoint {
 
-  public static final String[] SECRETS = {
-    "victory", "business", "available", "shipping", "washington"
+  // Đọc danh sách secrets từ biến môi trường
+  private static String[] SECRETS = new String[] {};
+    
+  static {
+      String secretsEnv = System.getenv("JWT_SECRETS");
+      if (secretsEnv != null && !secretsEnv.isEmpty()) {
+          SECRETS = secretsEnv.split(",");
+      }
   };
   public static final String JWT_SECRET =
       TextCodec.BASE64.encode(SECRETS[new Random().nextInt(SECRETS.length)]);
