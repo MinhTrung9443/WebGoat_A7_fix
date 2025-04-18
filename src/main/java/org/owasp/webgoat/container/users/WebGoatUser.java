@@ -87,4 +87,9 @@ public class WebGoatUser implements UserDetails {
   public int hashCode() {
     return user.hashCode();
   }
+
+public String getEmail() {
+	// TODO Auto-generated method stub
+	return null;
+}
 }
