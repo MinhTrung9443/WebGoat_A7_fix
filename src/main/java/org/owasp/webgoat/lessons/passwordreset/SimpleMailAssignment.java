@@ -10,10 +10,15 @@ import static org.owasp.webgoat.container.assignments.AttackResultBuilder.inform
 import static org.owasp.webgoat.container.assignments.AttackResultBuilder.success;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.apache.commons.lang3.StringUtils;
 import org.owasp.webgoat.container.CurrentUsername;
 import org.owasp.webgoat.container.assignments.AssignmentEndpoint;
 import org.owasp.webgoat.container.assignments.AttackResult;
+import org.owasp.webgoat.container.users.UserRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -22,80 +27,71 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
+import org.owasp.webgoat.container.users.WebGoatUser;
 
 @RestController
 public class SimpleMailAssignment implements AssignmentEndpoint {
-  private final String webWolfURL;
-  private RestTemplate restTemplate;
 
-  public SimpleMailAssignment(
-      RestTemplate restTemplate, @Value("${webwolf.mail.url}") String webWolfURL) {
-    this.restTemplate = restTemplate;
-    this.webWolfURL = webWolfURL;
-  }
+	private final String webWolfURL;
+	private final RestTemplate restTemplate;
+	private final UserRepository userRepository;
 
-  @PostMapping(
-      path = "/PasswordReset/simple-mail",
-      consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
-  @ResponseBody
-  public AttackResult login(
-      @RequestParam String email,
-      @RequestParam String password,
-      @CurrentUsername String webGoatUsername) {
-    String emailAddress = ofNullable(email).orElse("unknown@webgoat.org");
-    String username = extractUsername(emailAddress);
+	@Autowired
+	public SimpleMailAssignment(RestTemplate restTemplate, @Value("${webwolf.mail.url}") String webWolfURL,
+			UserRepository userRepository) {
+		this.restTemplate = restTemplate;
+		this.webWolfURL = webWolfURL;
+		this.userRepository = userRepository;
+	}
 
-    if (username.equals(webGoatUsername) && StringUtils.reverse(username).equals(password)) {
-      return success(this).build();
-    } else {
-      return failed(this).feedbackArgs("password-reset-simple.password_incorrect").build();
-    }
-  }
+	@PostMapping(path = "/PasswordReset/simple-mail", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+	@ResponseBody
+	public AttackResult login(@RequestParam String email, @RequestParam String password,
+			@CurrentUsername String webGoatUsername) {
 
-  @PostMapping(
-      consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE,
-      value = "/PasswordReset/simple-mail/reset")
-  @ResponseBody
-  public AttackResult resetPassword(
-      @RequestParam String emailReset, @CurrentUsername String username) {
-    String email = ofNullable(emailReset).orElse("unknown@webgoat.org");
-    return sendEmail(extractUsername(email), email, username);
-  }
+		String emailAddress = ofNullable(email).orElse("unknown@webgoat.org");
+		String username = extractUsername(emailAddress);
 
-  private String extractUsername(String email) {
-    int index = email.indexOf("@");
-    return email.substring(0, index == -1 ? email.length() : index);
-  }
+		if (username.equals(webGoatUsername) && StringUtils.reverse(username).equals(password)) {
+			return success(this).build();
+		} else {
+			return failed(this).feedback("password-reset-simple.password_incorrect").feedbackArgs(email).build();
+		}
+	}
 
-  private AttackResult sendEmail(String username, String email, String webGoatUsername) {
-    if (username.equals(webGoatUsername)) {
-      PasswordResetEmail mailEvent =
-          PasswordResetEmail.builder()
-              .recipient(username)
-              .title("Simple e-mail assignment")
-              .time(LocalDateTime.now())
-              .contents(
-                  "Thanks for resetting your password, your new password is: "
-                      + StringUtils.reverse(username))
-              .sender("webgoat@owasp.org")
-              .build();
-      try {
-        restTemplate.postForEntity(webWolfURL, mailEvent, Object.class);
-      } catch (RestClientException e) {
-        return informationMessage(this)
-            .feedback("password-reset-simple.email_failed")
-            .output(e.getMessage())
-            .build();
-      }
-      return informationMessage(this)
-          .feedback("password-reset-simple.email_send")
-          .feedbackArgs(email)
-          .build();
-    } else {
-      return informationMessage(this)
-          .feedback("password-reset-simple.email_mismatch")
-          .feedbackArgs(username)
-          .build();
-    }
-  }
+	@PostMapping(path = "/PasswordReset/simple-mail/reset", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+	@ResponseBody
+	public AttackResult resetPassword(@RequestParam String emailReset, @CurrentUsername String username) {
+		String email = ofNullable(emailReset).orElse("unknown@webgoat.org");
+		return sendEmail(extractUsername(email), email, username);
+	}
+
+	private String extractUsername(String email) {
+		int index = email.indexOf("@");
+		return email.substring(0, index == -1 ? email.length() : index);
+	}
+
+	private AttackResult sendEmail(String email, String fullEmail, String currentUser) {
+		WebGoatUser user = userRepository.findByUsername(email);
+
+		if (user == null || !user.getUsername().equalsIgnoreCase(fullEmail)) {
+			return informationMessage(this).feedback("password-reset-simple.user_not_found_or_email_mismatch")
+					.feedbackArgs(fullEmail).build();
+		}
+
+// Gửi email mô phỏng đến WebWolf
+		try {
+			Map<String, String> body = new HashMap<>();
+			body.put("email", fullEmail);
+			body.put("username", email);
+			body.put("content", "Hello " + email + ", someone requested a password reset for your account at "
+					+ LocalDateTime.now() + ". If this was you, please follow the instructions...");
+
+			restTemplate.postForObject(webWolfURL, body, String.class);
+
+			return success(this).feedback("password-reset-simple.email_sent").build();
+		} catch (RestClientException ex) {
+			return failed(this).feedback("password-reset-simple.email_failed").feedbackArgs(ex.getMessage()).build();
+		}
+	}
 }
