@@ -30,10 +30,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @AssignmentHints({"jwt-secret-hint1", "jwt-secret-hint2", "jwt-secret-hint3"})
 public class JWTSecretKeyEndpoint implements AssignmentEndpoint {
-
-  public static final String[] SECRETS = {
-    "victory", "business", "available", "shipping", "washington"
-  };
+	
+  public static final String[] SECRETS = System.getenv("key").split(",");
   public static final String JWT_SECRET =
       TextCodec.BASE64.encode(SECRETS[new Random().nextInt(SECRETS.length)]);
   private static final String WEBGOAT_USER = "WebGoat";

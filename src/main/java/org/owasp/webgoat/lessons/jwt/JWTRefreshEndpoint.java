@@ -118,8 +118,8 @@ public class JWTRefreshEndpoint implements AssignmentEndpoint {
     String user;
     String refreshToken;
     try {
-      Jwt<Header, Claims> jwt = Jwts.parser().setSigningKey(JWT_PASSWORD).parseClaimsJwt(token.replace("Bearer ", ""));
-          //Jwts.parser().setSigningKey(JWT_PASSWORD).parse(token.replace("Bearer ", ""));
+      Jwt<Header, Claims> jwt = Jwts.parser().setSigningKey(JWT_PASSWORD).parseClaimsJwt(token.replace("Bearer ", "")); // phương thức mới được update
+          //Jwts.parser().setSigningKey(JWT_PASSWORD).parse(token.replace("Bearer ", ""));  Phương thức cũ được sử dụng của hệ thống
     		  
       user = (String) jwt.getBody().get("user");
       refreshToken = (String) json.get("refresh_token");
