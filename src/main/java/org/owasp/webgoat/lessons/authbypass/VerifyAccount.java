@@ -48,10 +48,7 @@ public class VerifyAccount implements AssignmentEndpoint {
     AccountVerificationHelper verificationHelper = new AccountVerificationHelper();
     Map<String, String> submittedAnswers = parseSecQuestions(req);
     if (!verificationHelper.didUserLikelylCheat((HashMap) submittedAnswers)) {
-      return failed(this)
-          .feedback("verify-account.cheated")
-          .output("Yes, you guessed correctly, but see the feedback message")
-          .build();
+    	return failed(this).feedback("verify-account.failed").build();
     }
     return success(this).feedback("verify-account.success").build();
 //    // else
