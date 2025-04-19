@@ -38,6 +38,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
+import java.security.Key;
+import java.security.interfaces.RSAPublicKey;
+import java.security.interfaces.RSAPrivateKey;
 
 @RequestMapping("/JWT/")
 @RestController
@@ -49,66 +52,109 @@ import org.springframework.web.bind.annotation.RestController;
   "jwt-jku-hint5"
 })
 public class JWTHeaderJKUEndpoint implements AssignmentEndpoint {
-	private final LessonDataSource dataSource;
-	
-	private JWTHeaderJKUEndpoint(LessonDataSource dataSource) {
-	    this.dataSource = dataSource;
-	  }
-  @PostMapping("jku/follow/{user}")
-  public @ResponseBody String follow(@PathVariable("user") String user) {
-    if ("Jerry".equals(user)) {
-      return "Following yourself seems redundant";
-    } else {
-      return "You are now following Tom";
-    }
-  }
+    private final LessonDataSource dataSource;
 
-  @PostMapping("jku/delete")
-  public @ResponseBody AttackResult resetVotes(@RequestParam("token") String token) {
-	  if (StringUtils.isEmpty(token)) {
-	      return failed(this).feedback("jwt-invalid-token").build();
-	    } else {
-	      try {
-	        final String[] errorMessage = {null};
-	        Jwt jwt =
-	            Jwts.parser()
-	                .setSigningKeyResolver(
-	                    new SigningKeyResolverAdapter() {
-	                      @Override
-	                      public byte[] resolveSigningKeyBytes(JwsHeader header, Claims claims) {
-	                        final String kid = (String) header.get("kid");
-	                        try (var connection = dataSource.getConnection()) {
-	                          ResultSet rs =
-	                              connection
-	                                  .createStatement()
-	                                  .executeQuery(
-	                                      "SELECT key FROM jwt_keys WHERE id = '" + kid + "'");
-	                          while (rs.next()) {
-	                            return TextCodec.BASE64.decode(rs.getString(1));
-	                          }
-	                        } catch (SQLException e) {
-	                          errorMessage[0] = e.getMessage();
-	                        }
-	                        return null;
-	                      }
-	                    })
-	                .parseClaimsJws(token);
-	        if (errorMessage[0] != null) {
-	          return failed(this).output(errorMessage[0]).build();
-	        }
-	        Claims claims = (Claims) jwt.getBody();
-	        String username = (String) claims.get("username");
-	        if ("Jerry".equals(username)) {
-	          return failed(this).feedback("jwt-final-jerry-account").build();
-	        }
-	        if ("Tom".equals(username)) {
-	          return success(this).build();
-	        } else {
-	          return failed(this).feedback("jwt-final-not-tom").build();
-	        }
-	      } catch (JwtException e) {
-	        return failed(this).feedback("jwt-invalid-token").output(e.toString()).build();
-	      }
-	    }
-  }
+    private JWTHeaderJKUEndpoint(LessonDataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+
+    @PostMapping("jku/follow/{user}")
+    public @ResponseBody String follow(@PathVariable("user") String user) {
+        if ("Jerry".equals(user)) {
+            return "Following yourself seems redundant";
+        } else {
+            return "You are now following Tom";
+        }
+    }
+
+    // Phương thức kiểm tra và lấy khóa công khai
+    public Key resolveSigningKey(JwsHeader header, Claims claims) {
+        // Lấy giá trị "jku" từ header JWT
+        String jku = (String) header.get("jku");
+
+        // Kiểm tra nếu jku không phải là URL hợp lệ
+        if (jku == null || !jku.equals("https://cognito-idp.us-east-1.amazonaws.com/webgoat/.well-known/jwks.json")) {
+            throw new JwtException("JKU không hợp lệ: " + jku);
+        }
+
+        // Nếu jku hợp lệ, lấy public key từ kid
+        String kid = header.getKeyId();
+        try {
+            RSAPublicKey publicKey = getPublicKeyFromDatabase(kid);
+            return publicKey;
+        } catch (Exception e) {
+            throw new RuntimeException("Không thể giải mã public key từ kid: " + kid, e);
+        }
+    }
+
+    private RSAPublicKey getPublicKeyFromDatabase(String kid) {
+        String sql = "SELECT public_key FROM jwt_keys WHERE kid = ?";
+        try (var connection = dataSource.getConnection();
+             var statement = connection.prepareStatement(sql)) {
+
+            statement.setString(1, kid);
+            ResultSet rs = statement.executeQuery();
+
+            if (rs.next()) {
+                String publicKeyBase64 = rs.getString("public_key");
+                byte[] keyBytes = java.util.Base64.getDecoder().decode(publicKeyBase64);
+                java.security.spec.X509EncodedKeySpec spec = new java.security.spec.X509EncodedKeySpec(keyBytes);
+                java.security.KeyFactory kf = java.security.KeyFactory.getInstance("RSA");
+
+                return (RSAPublicKey) kf.generatePublic(spec);
+            } else {
+                throw new IllegalArgumentException("Không tìm thấy khóa với kid: " + kid);
+            }
+
+        } catch (SQLException | java.security.NoSuchAlgorithmException | java.security.spec.InvalidKeySpecException e) {
+            throw new RuntimeException("Lỗi khi lấy khóa công khai từ DB", e);
+        }
+    }
+
+    @PostMapping("jku/delete")
+    public @ResponseBody AttackResult resetVotes(@RequestParam("token") String token) {
+        if (StringUtils.isEmpty(token)) {
+            return failed(this).feedback("jwt-invalid-token").build();
+        } else {
+            try {
+                final String[] errorMessage = {null};
+
+                Jwt jwt = Jwts.parser()
+                        .setSigningKeyResolver(new SigningKeyResolverAdapter() {
+                            @Override
+                            public Key resolveSigningKey(JwsHeader header, Claims claims) {
+                                // Kiểm tra lại jku khi giải mã token
+                                String jku = (String) header.get("jku");
+                                if (jku == null || !jku.equals("https://cognito-idp.us-east-1.amazonaws.com/webgoat/.well-known/jwks.json")) {
+                                    errorMessage[0] = "JKU không hợp lệ: " + jku;
+                                    return null;  // Trả về null nếu JKU không hợp lệ
+                                }
+                                String kid = header.getKeyId();
+                                return getPublicKeyFromDatabase(kid);
+                            }
+                        })
+                        .parseClaimsJws(token);
+
+                if (errorMessage[0] != null) {
+                    return failed(this).output(errorMessage[0]).build();
+                }
+
+                Claims claims = (Claims) jwt.getBody();
+                String username = (String) claims.get("username");
+
+                if ("Jerry".equals(username)) {
+                    return failed(this).feedback("jwt-final-jerry-account").build();
+                }
+                if ("Tom".equals(username)) {
+                    return success(this).build();
+                } else {
+                    return failed(this).feedback("jwt-final-not-tom").build();
+                }
+
+            } catch (JwtException e) {
+                return failed(this).feedback("jwt-invalid-token").output(e.toString()).build();
+            }
+        }
+    }
 }
+
