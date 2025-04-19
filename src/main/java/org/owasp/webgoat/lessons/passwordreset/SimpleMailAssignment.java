@@ -32,66 +32,97 @@ import org.owasp.webgoat.container.users.WebGoatUser;
 @RestController
 public class SimpleMailAssignment implements AssignmentEndpoint {
 
-	private final String webWolfURL;
-	private final RestTemplate restTemplate;
-	private final UserRepository userRepository;
+    private final String webWolfURL;
+    private final RestTemplate restTemplate;
+    private final UserRepository userRepository;
 
-	@Autowired
-	public SimpleMailAssignment(RestTemplate restTemplate, @Value("${webwolf.mail.url}") String webWolfURL,
-			UserRepository userRepository) {
-		this.restTemplate = restTemplate;
-		this.webWolfURL = webWolfURL;
-		this.userRepository = userRepository;
-	}
+    @Autowired
+    public SimpleMailAssignment(RestTemplate restTemplate, @Value("${webwolf.mail.url}") String webWolfURL,
+            UserRepository userRepository) {
+        this.restTemplate = restTemplate;
+        this.webWolfURL = webWolfURL;
+        this.userRepository = userRepository;
+    }
 
-	@PostMapping(path = "/PasswordReset/simple-mail", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
-	@ResponseBody
-	public AttackResult login(@RequestParam String email, @RequestParam String password,
-			@CurrentUsername String webGoatUsername) {
+    @PostMapping(path = "/PasswordReset/simple-mail", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+    @ResponseBody
+    public AttackResult login(@RequestParam String email, @RequestParam String password,
+            @CurrentUsername String webGoatUsername) {
 
-		String emailAddress = ofNullable(email).orElse("unknown@webgoat.org");
-		String username = extractUsername(emailAddress);
+        String emailAddress = ofNullable(email).orElse("unknown@webgoat.org");
+        String username = extractUsername(emailAddress);
 
-		if (username.equals(webGoatUsername) && StringUtils.reverse(username).equals(password)) {
-			return success(this).build();
-		} else {
-			return failed(this).feedback("password-reset-simple.password_incorrect").feedbackArgs(email).build();
-		}
-	}
+        if (username == null) {
+            return failed(this).feedback("password-reset-simple.invalid_email").feedbackArgs(emailAddress).build();
+        }
 
-	@PostMapping(path = "/PasswordReset/simple-mail/reset", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
-	@ResponseBody
-	public AttackResult resetPassword(@RequestParam String emailReset, @CurrentUsername String username) {
-		String email = ofNullable(emailReset).orElse("unknown@webgoat.org");
-		return sendEmail(extractUsername(email), email, username);
-	}
+        if (username.equals(webGoatUsername) && StringUtils.reverse(username).equals(password)) {
+            return success(this).build();
+        } else {
+            return failed(this).feedback("password-reset-simple.password_incorrect").feedbackArgs(emailAddress).build();
+        }
+    }
 
-	private String extractUsername(String email) {
-		int index = email.indexOf("@");
-		return email.substring(0, index == -1 ? email.length() : index);
-	}
+    @PostMapping(path = "/PasswordReset/simple-mail/reset", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+    @ResponseBody
+    public AttackResult resetPassword(@RequestParam String emailReset, @CurrentUsername String username) {
+        String email = ofNullable(emailReset).orElse("unknown@webgoat.org");
+        return sendEmail(extractUsername(email), email, username);
+    }
 
-	private AttackResult sendEmail(String email, String fullEmail, String currentUser) {
-		WebGoatUser user = userRepository.findByUsername(email);
+    private String extractUsername(String email) {
+        // Check if email ends with @webgoat.org
+        if (!email.endsWith("@webgoat.org")) {
+            return null; // Invalid email domain
+        }
 
-		if (user == null || !user.getUsername().equalsIgnoreCase(fullEmail)) {
-			return informationMessage(this).feedback("password-reset-simple.user_not_found_or_email_mismatch")
-					.feedbackArgs(fullEmail).build();
-		}
+        // Extract username (part before @)
+        int index = email.indexOf("@");
+        if (index == -1) {
+            return null; // No @ found, invalid email
+        }
 
-// Gửi email mô phỏng đến WebWolf
-		try {
-			Map<String, String> body = new HashMap<>();
-			body.put("email", fullEmail);
-			body.put("username", email);
-			body.put("content", "Hello " + email + ", someone requested a password reset for your account at "
-					+ LocalDateTime.now() + ". If this was you, please follow the instructions...");
+        String username = email.substring(0, index);
+        // Validate username: non-empty and contains only allowed characters
+        if (username.isEmpty() || !isValidUsername(username)) {
+            return null; // Invalid username
+        }
 
-			restTemplate.postForObject(webWolfURL, body, String.class);
+        return username;
+    }
 
-			return success(this).feedback("password-reset-simple.email_sent").build();
-		} catch (RestClientException ex) {
-			return failed(this).feedback("password-reset-simple.email_failed").feedbackArgs(ex.getMessage()).build();
-		}
-	}
+    private boolean isValidUsername(String username) {
+        // Allow letters, numbers, dots, and underscores
+        return username.matches("^[a-zA-Z0-9._]+$");
+    }
+
+    private AttackResult sendEmail(String username, String fullEmail, String currentUser) {
+        // If username is null, email was invalid
+        if (username == null) {
+            return informationMessage(this).feedback("password-reset-simple.invalid_email")
+                    .feedbackArgs(fullEmail).build();
+        }
+
+        WebGoatUser user = userRepository.findByUsername(username);
+
+        if (user == null || !user.getUsername().equalsIgnoreCase(username)) {
+            return informationMessage(this).feedback("password-reset-simple.user_not_found")
+                    .feedbackArgs(fullEmail).build();
+        }
+
+        // Send email simulation to WebWolf
+        try {
+            Map<String, String> body = new HashMap<>();
+            body.put("email", fullEmail);
+            body.put("username", username);
+            body.put("content", "Hello " + username + ", someone requested a password reset for your account at "
+                    + LocalDateTime.now() + ". If this was you, please follow the instructions...");
+
+            restTemplate.postForObject(webWolfURL, body, String.class);
+
+            return success(this).feedback("password-reset-simple.email_sent").build();
+        } catch (RestClientException ex) {
+            return failed(this).feedback("password-reset-simple.email_failed").feedbackArgs(ex.getMessage()).build();
+        }
+    }
 }

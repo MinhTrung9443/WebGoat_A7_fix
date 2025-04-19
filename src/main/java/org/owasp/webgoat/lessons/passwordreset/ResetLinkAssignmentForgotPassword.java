@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright © 2018 WebGoat authors
+ * SPDX-FileCopyrightText: Copyright © 2025 WebGoat authors
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 package org.owasp.webgoat.lessons.passwordreset;
@@ -25,48 +25,54 @@ import org.springframework.web.client.RestTemplate;
 @RestController
 public class ResetLinkAssignmentForgotPassword implements AssignmentEndpoint {
 
-    private final RestTemplate restTemplate;
-    private final String webWolfMailURL;
-    private final String baseDomainURL;
+  private final RestTemplate restTemplate;
+  private final String webWolfHost;
+  private final String webWolfPort;
+  private final String webWolfURL;
+  private final String webWolfMailURL;
+  private final String trustedHost;
 
-    public ResetLinkAssignmentForgotPassword(
-            RestTemplate restTemplate,
-            @Value("${webwolf.mail.url}") String webWolfMailURL,
-            @Value("${webgoat.base-url}") String baseDomainURL) {
-        this.restTemplate = restTemplate;
-        this.webWolfMailURL = webWolfMailURL;
-        this.baseDomainURL = baseDomainURL;
+  public ResetLinkAssignmentForgotPassword(
+      RestTemplate restTemplate,
+      @Value("${webwolf.host}") String webWolfHost,
+      @Value("${webwolf.port}") String webWolfPort,
+      @Value("${webwolf.url}") String webWolfURL,
+      @Value("${webwolf.mail.url}") String webWolfMailURL,
+      @Value("${webgoat.trusted.host:webgoat-cloud.net}") String trustedHost) {
+    this.restTemplate = restTemplate;
+    this.webWolfHost = webWolfHost;
+    this.webWolfPort = webWolfPort;
+    this.webWolfURL = webWolfURL;
+    this.webWolfMailURL = webWolfMailURL;
+    this.trustedHost = trustedHost;
+  }
+
+  @PostMapping("/PasswordReset/ForgotPassword/create-password-reset-link")
+  @ResponseBody
+  public AttackResult sendPasswordResetLink(
+      @RequestParam String email, HttpServletRequest request, @CurrentUsername String username) {
+    String resetLink = UUID.randomUUID().toString();
+    ResetLinkAssignment.resetLinks.add(resetLink);
+
+    try {
+      sendMailToUser(email, resetLink);
+    } catch (Exception e) {
+      return failed(this).output("E-mail can't be send. please try again.").build();
     }
 
-    @PostMapping("/PasswordReset/ForgotPassword/create-password-reset-link")
-    @ResponseBody
-    public AttackResult sendPasswordResetLink(
-            @RequestParam String email, HttpServletRequest request, @CurrentUsername String username) {
+    return success(this).feedback("email.send").feedbackArgs(email).build();
+  }
 
-        // Tạo reset token
-        String resetLink = UUID.randomUUID().toString();
-        ResetLinkAssignment.resetLinks.add(resetLink);
-
-        try {
-            sendMailToUser(email, resetLink);
-        } catch (Exception e) {
-            return failed(this).output("E-mail can't be sent. Please try again.").build();
-        }
-
-        return success(this).feedback("email.send").feedbackArgs(email).build();
-    }
-
-    private void sendMailToUser(String email, String resetLink) {
-        int index = email.indexOf("@");
-        String username = email.substring(0, index == -1 ? email.length() : index);
-
-        PasswordResetEmail mail = PasswordResetEmail.builder()
-                .title("Your password reset link")
-                .contents(String.format(ResetLinkAssignment.TEMPLATE, baseDomainURL, resetLink))
-                .sender("password-reset@webgoat-cloud.net")
-                .recipient(username)
-                .build();
-
-        this.restTemplate.postForEntity(webWolfMailURL, mail, Object.class);
-    }
+  private void sendMailToUser(String email, String resetLink) {
+    int index = email.indexOf("@");
+    String username = email.substring(0, index == -1 ? email.length() : index);
+    PasswordResetEmail mail =
+        PasswordResetEmail.builder()
+            .title("Your password reset link")
+            .contents(String.format(ResetLinkAssignment.TEMPLATE, trustedHost, resetLink))
+            .sender("password-reset@webgoat-cloud.net")
+            .recipient(username)
+            .build();
+    this.restTemplate.postForEntity(webWolfMailURL, mail, Object.class);
+  }
 }
